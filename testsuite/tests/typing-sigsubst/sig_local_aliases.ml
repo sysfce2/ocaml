@@ -30,7 +30,7 @@ module F(X : sig type t end) = struct
   type t = X.t
 end;;
 [%%expect{|
-module F : functor (X : sig type t end) -> sig type t = X.t end
+module F : (X : sig type t end) -> sig type t = X.t end
 |}]
 
 module type Accepted2 = sig
@@ -57,9 +57,9 @@ module type Reject2 = sig
   module M := F(N)
 end;;
 [%%expect{|
-Line 2, characters 14-18:
+Line 2, characters 16-17:
 2 |   module M := F(N)
-                  ^^^^
+                    ^
 Error: Unbound module "N"
 |}]
 

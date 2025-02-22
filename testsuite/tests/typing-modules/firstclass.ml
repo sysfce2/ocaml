@@ -32,8 +32,7 @@ val h : (module S2 with type t = 'a) -> (module S with type t = 'a) = <fun>
 Line 5, characters 3-4:
 5 |   (x : (module S'));; (* fail *)
        ^
-Error: This expression has type
-         "(module S2 with type t = int and type u = bool)"
+Error: The value "x" has type "(module S2 with type t = int and type u = bool)"
        but an expression was expected of type "(module S')"
        Modules do not match:
          S'
@@ -146,4 +145,24 @@ Error: Type "(module Nested_coercion)" is not a subtype of
          "(module Nested_coercion_bis)"
        The two first-class module types differ by a coercion of
        the primitive "%identity" to a value, in module "M".
+|}]
+
+(* Test if it is typed correctly *)
+module type T = sig type t end
+
+let valid_fcm = (module Int : T)
+
+[%%expect{|
+module type T = sig type t end
+val valid_fcm : (module T) = <module>
+|}]
+
+(* Test location in the error message *)
+let x = (module struct end : T with type t2 = int);;
+
+[%%expect{|
+Line 1, characters 29-49:
+1 | let x = (module struct end : T with type t2 = int);;
+                                 ^^^^^^^^^^^^^^^^^^^^
+Error: The signature constrained by "with" has no component named "t2"
 |}]

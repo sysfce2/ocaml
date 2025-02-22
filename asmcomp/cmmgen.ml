@@ -121,9 +121,14 @@ let min_mut x y =
   | Immutable,_ | _,Immutable -> Immutable
   | Mutable,Mutable -> Mutable
 
-let get_field env mut ptr n dbg =
+let get_field env imm_or_pointer mut ptr n dbg =
   let mut = min_mut mut (mut_from_env env ptr) in
-  get_field_gen mut ptr n dbg
+  let memory_chunk =
+    match imm_or_pointer with
+    | Immediate -> Word_int
+    | Pointer -> Word_val
+  in
+  get_field_gen ~memory_chunk mut ptr n dbg
 
 (* Translate structured constants to Cmm data items *)
 
@@ -238,6 +243,21 @@ type unboxed_number_kind =
   | Boxed of boxed_number * bool (* true: boxed form available at no cost *)
   | No_result (* expression never returns a result *)
 
+(* A value kind [vk] is compatible with a boxed-number kind [bk]
+   if the boxing operation [bk] returns a value that may live in the
+   value kind [vk]. *)
+let compatible_kind vk bk =
+  match bk with
+  | No_unboxing | No_result -> true
+  | Boxed (bn, _) ->
+      match bn, vk with
+      | _, Pgenval -> true
+      | (Boxed_float _ | Boxed_integer _), Pintval -> false
+      | Boxed_float _, Pfloatval -> true
+      | Boxed_integer _, Pfloatval -> false
+      | Boxed_float _, Pboxedintval _ -> false
+      | Boxed_integer (bi1, _), Pboxedintval bi2 -> bi1 = bi2
+
 (* Given unboxed_number_kind from two branches of the code, returns the
    resulting unboxed_number_kind.
 
@@ -259,10 +279,24 @@ let join_unboxed_number_kind ~strict k1 k2 =
       k
   | _, _ -> No_unboxing
 
-let is_unboxed_number_cmm ~strict cmm =
+(* [is_unboxed_number_cmm ~strict ~kind cmm] computes an unboxed
+   number kind for the value returned by the expression [cmm].
+
+   See [join_unboxed_number_kind] above for the meaning of the
+   [~strict] parameter.
+
+   [~kind] is the value kind expected for the return value. If the
+   expression contains branches returning different boxed number
+   kinds, only those that are compatible with the expected return kind
+   are considered -- the other must be unreachable if the program is
+   well-typed. In particular, the unboxed number kind we return shall
+   be compatible with it in the sense of [compatible_kind] above.
+*)
+let is_unboxed_number_cmm ~strict ~kind cmm =
   let r = ref No_result in
   let notify k =
-    r := join_unboxed_number_kind ~strict !r k
+    if compatible_kind kind k then
+      r := join_unboxed_number_kind ~strict !r k
   in
   let rec aux = function
     | Cop(Calloc, [Cconst_natint (hdr, _); _], dbg)
@@ -304,6 +338,15 @@ let is_unboxed_number_cmm ~strict cmm =
   in
   aux cmm;
   !r
+
+let machtype_of_value_kind (value_kind : Lambda.value_kind) =
+  match value_kind with
+  | Pgenval
+  | Pfloatval
+  | Pboxedintval _ ->
+      Cmm.typ_val
+  | Pintval ->
+      Cmm.typ_int
 
 (* Translate an expression *)
 
@@ -508,8 +551,7 @@ let rec transl env e =
       | ((Pfield_computed|Psequand
          | Prunstack | Pperform | Presume | Preperform
          | Pdls_get
-         | Patomic_load _ | Patomic_exchange
-         | Patomic_cas | Patomic_fetch_add
+         | Patomic_load
          | Psequor | Pnot | Pnegint | Paddint | Psubint
          | Pmulint | Pandint | Porint | Pxorint | Plslint
          | Plsrint | Pasrint | Pintoffloat | Pfloatofint
@@ -540,7 +582,7 @@ let rec transl env e =
          can be checked *)
       if Array.length s.us_index_blocks = 0 then
         make_switch
-          (untag_int (transl env arg) dbg)
+          (Tagged (transl env arg))
           s.us_index_consts
           (Array.map (fun expr -> transl env expr, dbg) s.us_actions_consts)
           dbg
@@ -667,7 +709,7 @@ and transl_catch env nfail ids body handler dbg =
            | Pintval | Pgenval -> true
          in
          u := join_unboxed_number_kind ~strict !u
-             (is_unboxed_number_cmm ~strict c)
+             (is_unboxed_number_cmm ~strict ~kind c)
       )
       ids args
   in
@@ -675,12 +717,12 @@ and transl_catch env nfail ids body handler dbg =
   let body = transl env_body body in
   let new_env, rewrite, ids =
     List.fold_right
-      (fun (id, _kind, u) (env, rewrite, ids) ->
+      (fun (id, kind, u) (env, rewrite, ids) ->
          match !u with
          | No_unboxing | Boxed (_, true) | No_result ->
              env,
              (fun x -> x) :: rewrite,
-             (id, Cmm.typ_val) :: ids
+             (id, machtype_of_value_kind kind) :: ids
          | Boxed (bn, false) ->
              let unboxed_id = V.create_local (VP.name id) in
              add_unboxed_id (VP.var id) unboxed_id bn env,
@@ -766,8 +808,8 @@ and transl_prim_1 env p arg dbg =
     Popaque ->
       opaque (transl env arg) dbg
   (* Heap operations *)
-  | Pfield(n, _, mut) ->
-      get_field env mut (transl env arg) n dbg
+  | Pfield(n, imm_or_pointer, mut) ->
+      get_field env imm_or_pointer mut (transl env arg) n dbg
   | Pfloatfield n ->
       let ptr = transl env arg in
       box_float dbg (floatfield n ptr dbg)
@@ -832,16 +874,13 @@ and transl_prim_1 env p arg dbg =
        dbg)
   | Pdls_get ->
       Cop(Cdls_get, [transl env arg], dbg)
-  | Patomic_load {immediate_or_pointer = Immediate} ->
-      Cop(mk_load_atomic Word_int, [transl env arg], dbg)
-  | Patomic_load {immediate_or_pointer = Pointer} ->
+  | Patomic_load ->
       Cop(mk_load_atomic Word_val, [transl env arg], dbg)
   | Ppoll ->
     (Csequence (remove_unit (transl env arg),
                 return_unit dbg (Cop(Cpoll, [], dbg))))
   | (Pfield_computed | Psequand | Psequor
     | Prunstack | Presume | Preperform
-    | Patomic_exchange | Patomic_cas | Patomic_fetch_add
     | Paddint | Psubint | Pmulint | Pandint
     | Porint | Pxorint | Plslint | Plsrint | Pasrint
     | Paddfloat | Psubfloat | Pmulfloat | Pdivfloat
@@ -1025,14 +1064,8 @@ and transl_prim_2 env p arg1 arg2 dbg =
       tag_int (Cop(Ccmpi cmp,
                      [transl_unbox_int dbg env bi arg1;
                       transl_unbox_int dbg env bi arg2], dbg)) dbg
-  | Patomic_exchange ->
-     Cop (Cextcall ("caml_atomic_exchange", typ_val, [], false),
-          [transl env arg1; transl env arg2], dbg)
-  | Patomic_fetch_add ->
-     Cop (Cextcall ("caml_atomic_fetch_add", typ_int, [], false),
-          [transl env arg1; transl env arg2], dbg)
   | Prunstack | Pperform | Presume | Preperform | Pdls_get
-  | Patomic_cas | Patomic_load _
+  | Patomic_load
   | Pnot | Pnegint | Pintoffloat | Pfloatofint | Pnegfloat
   | Pabsfloat | Pstringlength | Pbyteslength | Pbytessetu | Pbytessets
   | Pisint | Pbswap16 | Pint_as_pointer | Popaque | Pread_symbol _
@@ -1084,10 +1117,6 @@ and transl_prim_3 env p arg1 arg2 arg3 dbg =
       bigstring_set size unsafe (transl env arg1) (transl env arg2)
         (transl_unbox_sized size dbg env arg3) dbg
 
-  | Patomic_cas ->
-     Cop (Cextcall ("caml_atomic_cas", typ_int, [], false),
-          [transl env arg1; transl env arg2; transl env arg3], dbg)
-
   (* Effects *)
 
   | Prunstack ->
@@ -1103,7 +1132,7 @@ and transl_prim_3 env p arg1 arg2 arg3 dbg =
            dbg)
 
   | Pperform | Pdls_get | Presume
-  | Patomic_exchange | Patomic_fetch_add | Patomic_load _
+  | Patomic_load
   | Pfield_computed | Psequand | Psequor | Pnot | Pnegint | Paddint
   | Psubint | Pmulint | Pandint | Porint | Pxorint | Plslint | Plsrint | Pasrint
   | Pintoffloat | Pfloatofint | Pnegfloat | Pabsfloat | Paddfloat | Psubfloat
@@ -1134,9 +1163,9 @@ and transl_prim_4 env p arg1 arg2 arg3 arg4 dbg =
            dbg)
   | Psetfield_computed _
   | Pbytessetu | Pbytessets | Parraysetu _
-  | Parraysets _ | Pbytes_set _ | Pbigstring_set _ | Patomic_cas
+  | Parraysets _ | Pbytes_set _ | Pbigstring_set _
   | Prunstack | Preperform | Pperform | Pdls_get
-  | Patomic_exchange | Patomic_fetch_add | Patomic_load _
+  | Patomic_load
   | Pfield_computed | Psequand | Psequor | Pnot | Pnegint | Paddint
   | Psubint | Pmulint | Pandint | Porint | Pxorint | Plslint | Plsrint | Pasrint
   | Pintoffloat | Pfloatofint | Pnegfloat | Pabsfloat | Paddfloat | Psubfloat
@@ -1193,14 +1222,14 @@ and transl_let env str kind id exp transl_body =
         (* It would be safe to always unbox in this case, but
            we do it only if this indeed allows us to get rid of
            some allocations in the bound expression. *)
-        is_unboxed_number_cmm ~strict:false cexp
+        is_unboxed_number_cmm ~strict:false ~kind cexp
     | _, Pgenval ->
         (* Here we don't know statically that the bound expression
            evaluates to an unboxable number type.  We need to be stricter
            and ensure that all possible branches in the expression
            return a boxed value (of the same kind).  Indeed, with GADTs,
            different branches could return different types. *)
-        is_unboxed_number_cmm ~strict:true cexp
+        is_unboxed_number_cmm ~strict:true ~kind cexp
     | _, Pintval ->
         No_unboxing
   in
@@ -1373,7 +1402,6 @@ and transl_switch dbg env arg index cases = match Array.length cases with
     let cases = Array.map (transl env) cases in
     transl_switch_clambda dbg arg index cases
 
-
 (* Translate a function definition *)
 
 let transl_function f =
@@ -1393,8 +1421,13 @@ let transl_function f =
     else
       [ Reduce_code_size ]
   in
+  let fun_args =
+    List.map (fun (id, value_kind) ->
+        (id, machtype_of_value_kind value_kind))
+      f.params
+  in
   Cfunction {fun_name = f.label;
-             fun_args = List.map (fun (id, _) -> (id, typ_val)) f.params;
+             fun_args;
              fun_body = cmm_body;
              fun_codegen_options;
              fun_poll = f.poll;

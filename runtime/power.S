@@ -14,6 +14,7 @@
 /**************************************************************************/
 
 #include "caml/m.h"
+#include "caml/asm.h"
 
         .abiversion 2
 
@@ -76,19 +77,19 @@
 .endm
 
 #if defined(FUNCTION_SECTIONS)
-        TEXT_SECTION caml_hot.code_begin
-        .globl caml_hot.code_begin
-caml_hot.code_begin:
+        TEXT_SECTION caml_hot$code_begin
+        .globl caml_hot$code_begin
+caml_hot$code_begin:
 
-        TEXT_SECTION caml_hot.code_end
-        .globl caml_hot.code_end
-caml_hot.code_end:
+        TEXT_SECTION caml_hot$code_end
+        .globl caml_hot$code_end
+caml_hot$code_end:
 #endif
 
 .macro FUNCTION name
         TEXT_SECTION \name
         .globl \name
-        .type \name, @function
+        TYPE_DIRECTIVE(\name,@function)
 \name:
 0:      addis   2, 12, .TOC.- 0b@ha
         addi    2, 2,  .TOC.- 0b@l
@@ -96,7 +97,17 @@ caml_hot.code_end:
 .endm
 
 .macro ENDFUNCTION name
-       .size \name, . - \name
+        SIZE_DIRECTIVE(\name)
+.endm
+
+.macro OBJECT name
+        .globl \name
+        TYPE_DIRECTIVE(\name,@object)
+\name:
+.endm
+
+.macro ENDOBJECT name
+        SIZE_DIRECTIVE(\name)
 .endm
 
 /* Function prologue and epilogue */
@@ -383,19 +394,22 @@ caml_hot.code_end:
 
 #endif /* } WITH_THREAD_SANITIZER */
 
+/* Allocation functions and GC interface.
+   Referenced from C code in runtime/startup_nat.c
+*/
         TEXT_SECTION caml_system__code_begin
         .globl  caml_system__code_begin
 caml_system__code_begin:
 
 /* Reallocate the stack when it is too small. */
-/* Desired size is passed in register TMP2. */
+/* Desired size is passed in register r27. */
 
 FUNCTION caml_call_realloc_stack
         ENTER_FUNCTION
    /* Save all registers, as well as ALLOC_PTR and TRAP_PTR */
-        SAVE_ALL_REGS  /* TMP2 is preserved */
+        SAVE_ALL_REGS  /* r27 is preserved */
    /* Recover desired size, to be passed in r3 */
-        mr      3, TMP2
+        mr      3, 27
    /* Switch stacks and call caml_try_realloc_stack */
         SWITCH_OCAML_TO_C
         Far_call(caml_try_realloc_stack)
@@ -1178,12 +1192,10 @@ ENDFUNCTION caml_ml_array_bound_error
         .globl  caml_system__code_end
 caml_system__code_end:
 
-/* Frame table */
-
+/* Frametable - GC roots for callback */
+/* Uses the same naming convention as ocamlopt generated modules. */
         .section ".data"
-        .globl  caml_system.frametable
-        .type   caml_system.frametable, @object
-caml_system.frametable:
+OBJECT caml_system$frametable
         .quad   2               /* two descriptors */
         .quad   .Lcaml_retaddr + 4  /* return address into callback */
         .short  -1              /* negative frame size => use callback link */
@@ -1193,6 +1205,7 @@ caml_system.frametable:
         .short  -1              /* negative frame size => use callback link */
         .short  0               /* no roots here */
         .align 3
+ENDOBJECT caml_system$frametable
 
 /* TOC entries */
 
@@ -1211,5 +1224,4 @@ TOCENTRY(caml_array_bound_error_asm)
 TOCENTRYLABEL(fiber_exn_handler)
 TOCENTRYLABEL(trap_handler)
 
-/* Mark stack as non-executable */
-        .section .note.GNU-stack,"",%progbits
+        NONEXECSTACK_NOTE

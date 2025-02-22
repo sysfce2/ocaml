@@ -47,7 +47,7 @@ let slot_offset env loc cls =
 (* Output function call *)
 
 let emit_call s =
-  if !pic_code then
+  if !Clflags.pic_code then
    `	brasl	%r14, {emit_symbol s}@PLT\n`
   else
    `	brasl	%r14, {emit_symbol s}\n`
@@ -121,7 +121,7 @@ let emit_stack env r =
 (* Output a load of the address of a global symbol *)
 
 let emit_load_symbol_addr reg s =
-  if !pic_code then
+  if !Clflags.pic_code then
   `	lgrl	{emit_reg reg}, {emit_symbol s}@GOT\n`
   else
   `	larl	{emit_reg reg}, {emit_symbol s}\n`
@@ -360,7 +360,7 @@ let emit_instr env i =
           if env.f.fun_frame_required then
             `	lg	%r14, {emit_int(n - size_addr)}(%r15)\n`;
           emit_stack_adjust (-n);
-          if !pic_code then
+          if !Clflags.pic_code then
             `	brcl	15, {emit_symbol func}@PLT\n`
           else
             `	brcl	15, {emit_symbol func}\n`
@@ -384,7 +384,7 @@ let emit_instr env i =
           cfi_def_cfa_register "%r12";
           (* NB: gdb has asserts on contiguous stacks that mean it
              will not unwind through this unless we were to tag this
-             calling frame with cfi_signal_frame in it's definition. *)
+             calling frame with cfi_signal_frame in its definition. *)
           let offset = Domainstate.(idx_of_field Domain_c_stack) * 8 in
           `	lg	%r15, {emit_int offset}(%r10)\n`;
           emit_call func;
@@ -718,7 +718,7 @@ let fundecl fundecl =
   let env = mk_env fundecl in
   `	.globl	{emit_symbol fundecl.fun_name}\n`;
   emit_debug_info fundecl.fun_dbg;
-  `	.type	{emit_symbol fundecl.fun_name}, @function\n`;
+  emit_type_directive fundecl.fun_name "@function";
   emit_named_text_section fundecl.fun_name;
   `	.align	8\n`;
   `{emit_symbol fundecl.fun_name}:\n`;
@@ -763,6 +763,7 @@ let fundecl fundecl =
   end;
 
   cfi_endproc ();
+  emit_size_directive fundecl.fun_name;
   (* Emit the numeric literals *)
   if env.float_literals <> [] || env.int_literals <> [] then begin
     emit_string rodata_space;
@@ -782,7 +783,7 @@ let fundecl fundecl =
 
 let declare_global_data s =
   `	.globl	{emit_symbol s}\n`;
-  `	.type	{emit_symbol s}, @object\n`
+  emit_type_directive s "@object"
 
 let emit_item = function
     Cglobal_symbol s ->
@@ -865,5 +866,5 @@ let end_assembly() =
       efa_def_label = (fun l -> `{emit_label l}:\n`);
       efa_string = (fun s -> emit_bytes_directive "	.byte	" (s ^ "\000"))
      };
-   (* Mark stack as non-executable *)
-   `	.section .note.GNU-stack,\"\",%progbits\n`
+  emit_size_directive lbl;
+  emit_nonexecstack_note ()

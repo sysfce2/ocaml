@@ -104,8 +104,7 @@ let rec expression event env = function
             | _ ->
                 value_path event env p
           in
-          let typ = Ctype.correct_levels valdesc.val_type in
-          v, typ
+          v, valdesc.val_type
       | exception Not_found ->
           raise(Error(Unbound_long_identifier lid))
     end
@@ -129,7 +128,8 @@ let rec expression event env = function
         Ttuple ty_list ->
           if n < 1 || n > List.length ty_list
           then raise(Error(Tuple_index(ty, List.length ty_list, n)))
-          else (Debugcom.Remote_value.field v (n-1), List.nth ty_list (n-1))
+          else (Debugcom.Remote_value.field v (n-1),
+                snd (List.nth ty_list (n-1)))
       | Tconstr(path, [ty_arg], _) when Path.same path Predef.path_array ->
           let size = Debugcom.Remote_value.size v in
           if n >= size
@@ -186,6 +186,7 @@ and find_label lbl env ty path tydesc pos = function
 
 open Format
 module Style = Misc.Style
+module Printtyp = Printtyp.Doc
 
 let as_inline_code pr = Format_doc.compat @@ Style.as_inline_code pr
 let inline_code = Format_doc.compat Style.inline_code

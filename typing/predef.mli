@@ -17,6 +17,37 @@
 
 open Types
 
+type abstract_type_constr = [
+  | `Int
+  | `Char
+  | `String
+  | `Bytes
+  | `Float
+  | `Continuation
+  | `Array
+  | `Nativeint
+  | `Int32
+  | `Int64
+  | `Lazy_t
+  | `Extension_constructor
+  | `Floatarray
+  | `Iarray
+]
+type data_type_constr = [
+  | `Bool
+  | `Unit
+  | `Exn
+  | `Eff
+  | `List
+  | `Option
+]
+type type_constr = [
+  | abstract_type_constr
+  | data_type_constr
+]
+
+val find_type_constr : Path.t -> type_constr option
+
 val type_int: type_expr
 val type_char: type_expr
 val type_string: type_expr
@@ -28,6 +59,7 @@ val type_exn: type_expr
 val type_eff: type_expr -> type_expr
 val type_continuation: type_expr -> type_expr -> type_expr
 val type_array: type_expr -> type_expr
+val type_iarray: type_expr -> type_expr
 val type_list: type_expr -> type_expr
 val type_option: type_expr -> type_expr
 val type_nativeint: type_expr
@@ -47,6 +79,7 @@ val path_unit: Path.t
 val path_exn: Path.t
 val path_eff: Path.t
 val path_array: Path.t
+val path_iarray: Path.t
 val path_list: Path.t
 val path_option: Path.t
 val path_nativeint: Path.t

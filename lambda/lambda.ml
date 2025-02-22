@@ -143,10 +143,7 @@ type primitive =
   (* Integer to external pointer *)
   | Pint_as_pointer
   (* Atomic operations *)
-  | Patomic_load of {immediate_or_pointer : immediate_or_pointer}
-  | Patomic_exchange
-  | Patomic_cas
-  | Patomic_fetch_add
+  | Patomic_load
   (* Inhibition of optimisation *)
   | Popaque
   (* Fetching domain-local state *)
@@ -724,7 +721,10 @@ let transl_class_path loc env path =
 let transl_prim mod_name name =
   let pers = Ident.create_persistent mod_name in
   let env = Env.add_persistent_structure pers Env.empty in
-  let lid = Longident.Ldot (Longident.Lident mod_name, name) in
+  let lid =
+    Longident.Ldot (Location.mknoloc (Longident.Lident mod_name),
+                    Location.mknoloc name)
+  in
   match Env.find_value_by_name lid env with
   | path, _ -> transl_value_path Loc_unknown env path
   | exception Not_found ->
