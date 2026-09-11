@@ -388,6 +388,11 @@ Working version
   appeared more than one input list or more than once in a single input list.
   (Nicolás Ojeda Bär, report by Zhang Rui, review by Antonin Décimo)
 
+- #15044: `Unix.realpath`: On Windows, improve normalization of UNC paths. For
+  example, `\\?\UNC\server\share` is now mapped to `\\server\share` rather than
+  `UNC\server\share`.
+  (Nicolás Ojeda Bär, review by David Allsopp and Antonin Décimo)
+
 ### Tools:
 
 - #14318, #14709, ocamldoc: use "Module_name (Library name)" rather than
@@ -554,7 +559,7 @@ Working version
 - #14993: the let-rec check should give generic arrays dynamic size,
   since floats and addresses have different sizes on 32-bit systems.
   (Jeremy Yallop, review by Vincent Laviron)
-  
+
 - #13335: Fix infinite loop in runtime_events.c's write_to_ring when an
   event is larger than the configured ring buffer. Only really comes up
   if you run the instrumented runtime with a small OCAMLRUNPARAM=e= setting
