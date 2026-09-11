@@ -18,6 +18,9 @@ Working version
 
 ### Runtime system:
 
+- #14988: Don't copy continuations in Weak.get_copy.
+  (Jeremy Yallop, review by Stefan Muenzel)
+
 - #14773 : Activate Haiku native backend
   (Sylvain Kerjean, review by Kate Deplaix and Nicolas Ojeda Bar)
   Enable native-code backend and testsuite on BeOS/Haiku.
